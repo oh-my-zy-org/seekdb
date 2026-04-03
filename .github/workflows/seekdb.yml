@@ -30,7 +30,7 @@ jobs:
     name: setup
     runs-on: arc-runner-k8s-ci-org-test
     container:
-      image: harbor.oceanbase-dev.com/obrde-test/ob-actions-runner-worker:0.0.3
+      image: harbor.oceanbase-dev.com/obrde-test/ob-actions-runner-worker:0.0.2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -108,7 +108,7 @@ jobs:
     needs: seekdb-setup
     runs-on: arc-runner-k8s-ci-org-test
     container:
-      image: harbor.oceanbase-dev.com/obrde-test/ob-actions-runner-worker:0.0.3
+      image: harbor.oceanbase-dev.com/obrde-test/ob-actions-runner-worker:0.0.2
     strategy:
       fail-fast: false
       matrix:
@@ -193,7 +193,7 @@ jobs:
     needs: seekdb-mysqltest
     runs-on: arc-runner-k8s-ci-org-test
     container:
-      image: harbor.oceanbase-dev.com/obrde-test/ob-actions-runner-worker:0.0.3
+      image: harbor.oceanbase-dev.com/obrde-test/ob-actions-runner-worker:0.0.2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
