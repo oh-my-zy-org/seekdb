@@ -171,6 +171,7 @@ ob_set_subtarget(ob_storage blocksstable_index_block
 ob_set_subtarget(ob_storage meta_store
   meta_store/ob_server_storage_meta_service.cpp
   meta_store/ob_server_storage_meta_persister.cpp
+  meta_store/ob_server_storage_meta_replayer.cpp
   meta_store/ob_storage_meta_io_util.cpp
   meta_store/ob_tenant_storage_meta_service.cpp
   meta_store/ob_tenant_storage_meta_persister.cpp
@@ -284,21 +285,20 @@ ob_set_subtarget(ob_storage high_availability
   high_availability/ob_storage_ha_service.cpp
   high_availability/ob_storage_ha_struct.cpp
   high_availability/ob_storage_restore_struct.cpp
-  high_availability/ob_tablet_group_restore.cpp
-  high_availability/ob_ls_restore.cpp
   high_availability/ob_storage_ha_dag.cpp
   high_availability/ob_storage_ha_tablet_builder.cpp
-  high_availability/ob_ls_transfer_info.cpp
   high_availability/ob_tablet_ha_status.cpp
   high_availability/ob_storage_ha_utils.cpp
-  high_availability/ob_transfer_struct.cpp
-  high_availability/ob_tablet_transfer_info.cpp
+  high_availability/ob_restore_status.cpp
+  high_availability/ob_restore_handler.cpp
+  high_availability/ob_restore_helper.cpp
+  high_availability/ob_restore_helper_ctx.cpp
+  high_availability/ob_restore_complete_dag_net.cpp
+  high_availability/ob_restore_dag_net.cpp
 )
 
 ob_set_subtarget(ob_storage restore
   restore/ob_ls_restore_args.cpp
-  restore/ob_ls_restore_handler.cpp
-  restore/ob_ls_restore_task_mgr.cpp
   restore/ob_tenant_restore_info_mgr.cpp
   restore/ob_restore_compatibility_util.cpp
 )
@@ -382,10 +382,7 @@ ob_set_subtarget(ob_storage tablet
   tablet/ob_tablet_binding_mds_user_data.cpp
   tablet/ob_tablet_mds_node_dump_operator.cpp
   tablet/ob_tablet_mds_table_mini_merger.cpp
-  tablet/ob_tablet_start_transfer_mds_helper.cpp
-  tablet/ob_tablet_finish_transfer_mds_helper.cpp
   tablet/ob_tablet_fork_mds_helper.cpp
-  tablet/ob_tablet_abort_transfer_mds_helper.cpp
   tablet/ob_tablet_persister.cpp
   tablet/ob_tablet_obj_load_helper.cpp
   tablet/ob_tablet.cpp
@@ -433,8 +430,8 @@ ob_set_subtarget(ob_storage tx
   tx/ob_tx_log_cb_mgr.cpp
   tx/ob_tx_ctx_log_cb_helper.cpp
   tx/ob_location_adapter.cpp
-  tx/ob_standby_timestamp_service.cpp
   tx/ob_tablet_to_ls_cache.cpp
+  tx/ob_standby_timestamp_service.cpp
   tx/ob_timestamp_access.cpp
   tx/ob_timestamp_service.cpp
   tx/ob_time_wheel.cpp
@@ -536,7 +533,6 @@ ob_set_subtarget(ob_storage ls
   ls/ob_ls_saved_info.cpp
   ls/ob_ls_reserved_snapshot_mgr.cpp
   ls/ob_ls_storage_clog_handler.cpp
-  ls/ob_ls_transfer_status.cpp
 )
 
 ob_set_subtarget(ob_storage column_store
@@ -588,6 +584,7 @@ ob_set_subtarget(ob_storage access
   access/ob_multiple_skip_scan_merge.cpp
   access/ob_multiple_multi_skip_scan_merge.cpp
   access/ob_multiple_mview_merge.cpp
+  access/ob_index_skip_scanner.cpp
   access/ob_table_scan_iterator.cpp
   access/ob_store_row_iterator.cpp
   access/ob_i_sample_iterator.cpp
@@ -693,6 +690,7 @@ ob_set_subtarget(ob_storage common
   ob_row_fuse.cpp
   ob_row_reshape.cpp
   ob_storage_rpc.cpp
+  ob_storage_grpc.cpp
   ob_storage_rpc.ipp
   ob_storage_schema.cpp
   ob_storage_schema_util.cpp
@@ -850,9 +848,6 @@ ob_set_subtarget(ob_storage multi_data_source
   multi_data_source/ob_mds_table_merge_dag_param.cpp
   multi_data_source/ob_mds_table_merge_task.cpp
   multi_data_source/ob_mds_minor_compaction_filter.cpp
-  multi_data_source/ob_start_transfer_in_mds_ctx.cpp
-  multi_data_source/ob_finish_transfer_in_mds_ctx.cpp
-  multi_data_source/ob_abort_transfer_in_mds_ctx.cpp
   multi_data_source/ob_tablet_create_mds_ctx.cpp
   multi_data_source/ob_tablet_mds_merge_ctx.cpp
   multi_data_source/test/example_user_helper_define.cpp
@@ -1028,17 +1023,6 @@ ob_set_subtarget(ob_storage vector_index
   vector_index/ob_vector_index_refresh.cpp
   vector_index/ob_vector_refresh_idx_transaction.cpp
   vector_index/ob_vector_index_sched_job_utils.cpp
-)
-
-ob_set_subtarget(ob_storage tenant_snapshot
-  tenant_snapshot/ob_tenant_snapshot_service.cpp
-  tenant_snapshot/ob_tenant_clone_service.cpp
-  tenant_snapshot/ob_tenant_snapshot_task.cpp
-  tenant_snapshot/ob_tenant_snapshot_mgr.cpp
-  tenant_snapshot/ob_tenant_snapshot_defs.cpp
-  tenant_snapshot/ob_ls_snapshot_mgr.cpp
-  tenant_snapshot/ob_ls_snapshot_defs.cpp
-  tenant_snapshot/ob_tenant_snapshot_meta_table.cpp
 )
 
 ob_set_subtarget(ob_storage truncate_info

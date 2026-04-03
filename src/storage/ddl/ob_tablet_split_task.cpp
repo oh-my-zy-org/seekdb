@@ -571,7 +571,7 @@ int ObTabletSplitDag::report_replica_build_status()
       LOG_INFO("report replica build status errsim", K(ret));
     }
 #endif
-    ObAddr rs_addr;
+    ObAddr rs_addr = GCTX.self_addr();
     arg.tenant_id_        = param_.tenant_id_;
     arg.dest_tenant_id_   = param_.tenant_id_;
     arg.ls_id_            = param_.ls_id_;
@@ -589,11 +589,9 @@ int ObTabletSplitDag::report_replica_build_status()
     arg.row_inserted_     = context_.row_inserted_;
     arg.physical_row_count_  = context_.physical_row_count_;
     if (OB_FAIL(ret)) {
-    } else if (OB_ISNULL(GCTX.rs_rpc_proxy_) || OB_ISNULL(GCTX.rs_mgr_)) {
+    } else if (OB_ISNULL(GCTX.rs_rpc_proxy_)) {
       ret = OB_ERR_SYS;
       LOG_WARN("inner system error, rootserver rpc proxy or rs mgr must not be NULL", K(ret), K(GCTX));
-    } else if (OB_FAIL(GCTX.rs_mgr_->get_master_root_server(rs_addr))) {
-      LOG_WARN("fail to get rootservice address", K(ret));
     } else if (OB_FAIL(GCTX.rs_rpc_proxy_->to(rs_addr).build_ddl_single_replica_response(arg))) {
       LOG_WARN("fail to send build ddl single replica response", K(ret), K(arg));
     }
@@ -671,11 +669,11 @@ int ObTabletSplitPrepareTask::process()
       ret = OB_E(EventTable::EN_BLOCK_SPLIT_BEFORE_SSTABLES_SPLIT) OB_SUCCESS;
       if (OB_SUCC(ret)) {
       } else if (OB_EAGAIN == ret) { // ret=-4023, errsim trigger to test orthogonal ls rebuild.
-        common::ObZone self_zone;
         ObString zone1_str("z1");
-        if (OB_FAIL(SVR_TRACER.get_server_zone(GCTX.self_addr(), self_zone))) { // overwrite ret is expected.
+        if (OB_ISNULL(GCTX.config_) { // overwrite ret is expected.
+          ret = OB_INVALID_ARGUMENT;
           LOG_WARN("get server zone failed", K(ret));
-        } else if (0 != ObCharset::instr(ObCollationType::CS_TYPE_UTF8MB4_GENERAL_CI, self_zone.str().ptr(), self_zone.str().length(), 
+        } else if (0 != ObCharset::instr(ObCollationType::CS_TYPE_UTF8MB4_GENERAL_CI, GCTX.config_->zone.str().ptr(), GCTX.config_->zone.str().length(),
             zone1_str.ptr(), zone1_str.length())) {
           ret = OB_EAGAIN;
           LOG_INFO("[ERRSIM] set eagain for tablet split", K(ret));
@@ -2379,25 +2377,38 @@ int ObTabletSplitUtil::split_task_ranges(
     }
   } else {
     const ObITableReadInfo &rowkey_read_info = tablet_handle.get_obj()->get_rowkey_read_info();
-    ObRangeSplitInfo range_info;
-    ObPartitionRangeSpliter range_spliter;
+    ObPartitionMultiRangeSpliter spliter;
+
+    ObArrayArray<ObStoreRange> multi_range_split_array;
+    ObSEArray<ObStoreRange, 1> ranges;
     ObStoreRange whole_range;
     whole_range.set_whole_range();
-    if (OB_FAIL(range_spliter.get_range_split_info(tables,
-       rowkey_read_info, whole_range, range_info))) {
-      LOG_WARN("init range split info failed", K(ret));
-    } else if (OB_FALSE_IT(range_info.parallel_target_count_ 
-      = MAX(1, MIN(user_parallelism, (range_info.total_size_ + schema_tablet_size - 1) / schema_tablet_size)))) {
-    } else if (OB_FAIL(range_spliter.split_ranges(range_info, 
-      tmp_arena, false /*for_compaction*/, store_ranges))) {
-      LOG_WARN("split ranges failed", K(ret), K(range_info));
-    } else if (OB_UNLIKELY(store_ranges.count() <= 0)) {
+
+    int64_t total_size = 0;
+    int64_t expected_task_count = 0;
+
+    if (OB_FAIL(ranges.push_back(whole_range))) {
+      LOG_WARN("Fail to push back whole range", KR(ret));
+    } else if (OB_FAIL(spliter.get_multi_range_size(ranges, rowkey_read_info, tables, total_size))) {
+      LOG_WARN("Fail to get multi range size", KR(ret));
+    } else if (FALSE_IT(expected_task_count
+                        = MAX(1,
+                              MIN(user_parallelism,
+                                  (total_size + schema_tablet_size - 1) / schema_tablet_size)))) {
+    } else if (OB_FAIL(spliter.get_split_multi_ranges(ranges,
+                                                      expected_task_count,
+                                                      rowkey_read_info,
+                                                      tables,
+                                                      tmp_arena,
+                                                      multi_range_split_array))) {
+      LOG_WARN("Fail to get split ranges", KR(ret));
+    } else if (OB_UNLIKELY(multi_range_split_array.count() <= 0)) {
       ret = OB_ERR_UNEXPECTED;
-      LOG_WARN("unexpected error", K(ret), K(range_info));
+      LOG_WARN("unexpected error", K(ret));
     } else {
-      const int64_t rowkey_arr_cnt = store_ranges.count() + 1; // with min and max.
+      const int64_t rowkey_arr_cnt = multi_range_split_array.count() + 1; // with min and max.
       if (OB_FAIL(parallel_datum_rowkey_list.prepare_allocate(rowkey_arr_cnt))) {
-        LOG_WARN("reserve failed", K(ret), K(rowkey_arr_cnt), K(store_ranges));
+        LOG_WARN("reserve failed", K(ret), K(rowkey_arr_cnt), K(multi_range_split_array));
       } else {
         ObDatumRowkey tmp_key;
         for (int64_t i = 0; OB_SUCC(ret) && i < rowkey_arr_cnt; i++) {
@@ -2406,16 +2417,26 @@ int ObTabletSplitUtil::split_task_ranges(
             if (OB_FAIL(tmp_key.deep_copy(parallel_datum_rowkey_list.at(i), allocator))) {
               LOG_WARN("failed to push min rowkey", K(ret));
             }
-          } else if (OB_FAIL(tmp_key.from_rowkey(store_ranges.at(i - 1).get_end_key().get_rowkey(), tmp_arena))) {
-            LOG_WARN("failed to shallow copy from obj", K(ret));
+          } else if (OB_UNLIKELY(multi_range_split_array.at(i - 1).count() != 1)) {
+            ret = OB_ERR_UNEXPECTED;
+            LOG_WARN("unexpected error", K(ret), K(multi_range_split_array.at(i - 1)));
+          } else if (OB_FAIL(tmp_key.from_rowkey(
+                         multi_range_split_array.at(i - 1).at(0).get_end_key().get_rowkey(),
+                         tmp_arena))) {
+            LOG_WARN("failed to shallow copy from obj", KR(ret));
           } else if (OB_FAIL(tmp_key.deep_copy(parallel_datum_rowkey_list.at(i), allocator))) {
-            LOG_WARN("failed to deep copy end key", K(ret), K(i), "src_key", store_ranges.at(i - 1).get_end_key());
+            LOG_WARN("failed to deep copy end key", KR(ret), K(i), K(multi_range_split_array.at(i - 1)));
           }
         }
       }
     }
-    LOG_INFO("prepare task split ranges finished", K(ret), K(user_parallelism), K(schema_tablet_size), K(tablet_id), 
-        K(parallel_datum_rowkey_list), K(range_info));
+    LOG_INFO("prepare task split ranges finished",
+             K(ret),
+             K(user_parallelism),
+             K(schema_tablet_size),
+             K(tablet_id),
+             K(parallel_datum_rowkey_list),
+             K(multi_range_split_array));
   }
   tmp_arena.reset();
   return ret;

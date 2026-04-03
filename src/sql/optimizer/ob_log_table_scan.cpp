@@ -2817,7 +2817,14 @@ int ObLogTableScan::allocate_granule_post(AllocGIContext &ctx)
     ctx.hash_part_ = table_schema->is_hash_part() || table_schema->is_hash_subpart()
                      || table_schema->is_key_part() || table_schema->is_key_subpart();
     //Before GI is adapted to the real agent table, block gi cannot be assigned to it
-    if (table_schema->is_spatial_index() || table_schema->is_vec_index()) {
+    if (is_text_retrieval_scan()
+        || is_vec_idx_scan_post_filter()
+        || is_multivalue_index_scan()
+        || use_index_merge()
+        || is_ivf_adaptive_scan()
+        || is_ipivf_adaptive_scan()
+        || table_schema->is_spatial_index()
+        || table_schema->is_vec_index()) {
      ctx.set_force_partition();
    }
   } else { /*do nothing*/ }
@@ -5024,7 +5031,7 @@ int ObLogTableScan::prepare_text_retrieval_dep_exprs(ObTextRetrievalInfo &tr_inf
       LOG_WARN("failed to formalize avg doc token count expr", K(ret));
     } else if (OB_FAIL(ObRawExprUtils::build_bm25_expr(*expr_factory, related_doc_cnt,
                                                       token_cnt_column, total_doc_cnt,
-                                                      doc_token_cnt, avg_doc_token_cnt_expr,
+                                                      doc_token_cnt, doc_length_column, avg_doc_token_cnt_expr,
                                                       relevance_expr, need_est_avg_doc_token_cnt,
                                                       session_info))) {
       LOG_WARN("failed to build bm25 expr", K(ret));

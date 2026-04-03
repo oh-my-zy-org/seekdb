@@ -26,6 +26,45 @@ namespace pl
 {
 
 _RLOCAL(_Unwind_Exception*, tl_eptr);
+
+#if defined(__APPLE__) && defined(__aarch64__)
+// Workaround for Apple libunwind crash in _Unwind_SetIP on macOS ARM64.
+// Apple's unw_set_reg for UNW_REG_IP tries to re-lookup unwind info (compact
+// unwind) for the new IP, but JIT frames registered via __register_frame only
+// have DWARF unwind info. The lookup returns NULL, causing a crash.
+// We bypass _Unwind_SetIP by locating the PC register in the cursor's
+// Registers_arm64 layout and writing directly.
+//
+// Registers_arm64 layout:
+//   x[0..28] (29 regs * 8 = 232), fp(x29), lr(x30), sp, pc
+//   PC is at offset 32*8 = 256 bytes from x0.
+static void safe_Unwind_SetIP(struct _Unwind_Context *context, uintptr_t new_ip) {
+  // Place a unique magic value in the eh_return_data register (x0) to find it
+  const uintptr_t magic = 0xDEAD1234CAFE5678ULL;
+  uintptr_t saved = _Unwind_GetGR(context, __builtin_eh_return_data_regno(0));
+  _Unwind_SetGR(context, __builtin_eh_return_data_regno(0), magic);
+
+  uint8_t *ctx = (uint8_t *)context;
+  bool found = false;
+  // Scan first 2KB for the magic value (register state is near the front)
+  for (size_t i = 0; i + 256 + 8 <= 2048; i += sizeof(uintptr_t)) {
+    if (*(uintptr_t *)(ctx + i) == magic) {
+      // Found x0 at offset i. PC is 256 bytes later.
+      *(uintptr_t *)(ctx + i + 256) = new_ip;
+      found = true;
+      break;
+    }
+  }
+
+  // Restore x0 to the saved value
+  _Unwind_SetGR(context, __builtin_eh_return_data_regno(0), saved);
+
+  if (!found) {
+    // Fallback to standard API (may crash — shouldn't reach here)
+    _Unwind_SetIP(context, new_ip);
+  }
+}
+#endif
 ObPLException pre_reserved_e(OB_ALLOCATE_MEMORY_FAILED); // reserved exception space to prevent exceptions from not being thrown when there is no memory
 
 void ObPLEH::eh_debug_int64(const char *name_ptr, int64_t name_len, int64_t object)
@@ -291,7 +330,8 @@ uintptr_t ObPLEH::readEncodedPointer(const uint8_t **data, uint8_t encoding)
     case DW_EH_PE_funcrel:
     case DW_EH_PE_aligned:
     default:
-      // not supported
+      LOG_ERROR_RET(OB_ERR_UNEXPECTED, "unsupported DWARF relative encoding in readEncodedPointer",
+                    K(encoding), "rel_encoding", encoding & 0x70);
       ob_abort();
       break;
   }
@@ -497,6 +537,12 @@ _Unwind_Reason_Code ObPLEH::handleLsda(int version,
     uint8_t lpStartEncoding = *lsda++;
 
     if (lpStartEncoding != DW_EH_PE_omit) {
+      uint8_t relEnc = lpStartEncoding & 0x70;
+      if (relEnc != DW_EH_PE_absptr && relEnc != DW_EH_PE_pcrel) {
+        LOG_WARN_RET(OB_ERR_UNEXPECTED, "unsupported lpStart encoding in LSDA, skip frame",
+                     K(lpStartEncoding), K(pc), K(funcStart));
+        return _URC_CONTINUE_UNWIND;
+      }
       readEncodedPointer(&lsda, lpStartEncoding);
     }
 
@@ -509,6 +555,16 @@ _Unwind_Reason_Code ObPLEH::handleLsda(int version,
     }
 
     uint8_t         callSiteEncoding = *lsda++;
+
+    if (callSiteEncoding != DW_EH_PE_omit) {
+      uint8_t relEnc = callSiteEncoding & 0x70;
+      if (relEnc != DW_EH_PE_absptr && relEnc != DW_EH_PE_pcrel) {
+        LOG_WARN_RET(OB_ERR_UNEXPECTED, "unsupported call site encoding in LSDA, skip frame",
+                     K(callSiteEncoding), K(pc), K(funcStart));
+        return _URC_CONTINUE_UNWIND;
+      }
+    }
+
     uint32_t        callSiteTableLength = static_cast<uint32_t>(readULEB128(&lsda));
     const uint8_t   *callSiteTableStart = lsda;
     const uint8_t   *callSiteTableEnd = callSiteTableStart + callSiteTableLength;
@@ -571,7 +627,11 @@ _Unwind_Reason_Code ObPLEH::handleLsda(int version,
           }
 
           // To execute landing pad set here
+#if defined(__APPLE__) && defined(__aarch64__)
+          safe_Unwind_SetIP(context, funcStart + landingPad);
+#else
           _Unwind_SetIP(context, funcStart + landingPad);
+#endif
           ret = _URC_INSTALL_CONTEXT;
         } else if (exceptionMatched) {
           ret = _URC_HANDLER_FOUND;
@@ -595,8 +655,9 @@ _Unwind_Reason_Code ObPLEH::eh_personality(int version, _Unwind_Action actions,
                                    struct _Unwind_Context *context)
 {
   const uint8_t *lsda = reinterpret_cast<const uint8_t *>(_Unwind_GetLanguageSpecificData(context));
+  _Unwind_Reason_Code ret = handleLsda(version, lsda, actions, exceptionClass, exceptionObject, context);
   LOG_DEBUG(">>>>>>>>>>0", K(version), K(actions), K(exceptionClass), K(lsda));
-  return handleLsda(version, lsda, actions, exceptionClass, exceptionObject, context);
+  return ret;
 }
 
 }

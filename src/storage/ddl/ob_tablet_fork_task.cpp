@@ -34,6 +34,7 @@
 #include "storage/tablet/ob_tablet_obj_load_helper.h"
 #include "share/scn.h"
 #include "storage/blocksstable/index_block/ob_index_block_dual_meta_iterator.h"
+#include "storage/column_store/ob_column_oriented_sstable.h"
 #include "storage/compaction/ob_sstable_builder.h"
 #include "storage/blocksstable/ob_sstable_private_object_cleaner.h"
 #include "share/scheduler/ob_dag_warning_history_mgr.h"
@@ -973,7 +974,11 @@ int ObTabletForkReuseTask::process_reuse_sstable()
       LOG_WARN("failed to build migration sstable param", K(ret), K(src_table_key));
     } else if (OB_FAIL(param.init_for_fork(mig_sstable_param, param_->dest_tablet_id_, src_table_key, meta_handle.get_sstable_meta(), fork_snapshot_scn))) {
       LOG_WARN("init for fork failed", K(ret), K(param_->dest_tablet_id_), K(src_table_key), K(fork_snapshot_scn));
-    } else if (OB_FAIL(context_->create_sstable(param, table_handle))) {
+    } else if (param.table_key().is_co_sstable()
+        && OB_FAIL(context_->create_sstable<ObCOSSTableV2>(param, table_handle))) {
+      LOG_WARN("failed to create co sstable with reused blocks", K(ret));
+    } else if (!param.table_key().is_co_sstable()
+        && OB_FAIL(context_->create_sstable(param, table_handle))) {
       LOG_WARN("failed to create sstable with reused blocks", K(ret));
     }
 
@@ -1079,7 +1084,11 @@ int ObTabletForkRewriteTask::process()
         } else if (OB_FAIL(create_param.init_for_split(param_->dest_tablet_id_, src_table_key, basic_meta,
             basic_meta.schema_version_, merge_res, max_end_scn))) {
           LOG_WARN("init create param failed", K(ret), K(max_end_scn));
-        } else if (OB_FAIL(context_->create_sstable(create_param, table_handle))) {
+        } else if (create_param.table_key().is_co_sstable()
+            && OB_FAIL(context_->create_sstable<ObCOSSTableV2>(create_param, table_handle))) {
+          LOG_WARN("failed to create co sstable", K(ret));
+        } else if (!create_param.table_key().is_co_sstable()
+            && OB_FAIL(context_->create_sstable(create_param, table_handle))) {
           LOG_WARN("failed to create sstable", K(ret));
         }
         if (OB_SUCC(ret)) {
@@ -1673,11 +1682,12 @@ int ObTabletForkUtil::get_participants(
         ret = OB_STATE_NOT_MATCH;
         LOG_WARN("unexpected table type when collecting fork participants", KR(ret), KPC(table));
       } else {
-        // Filter by fork_snapshot_version: only include sstables with start_scn <= fork_snapshot_version
+        // Filter by fork_snapshot_version: sstable scn_range is (start_scn, end_scn]
+        // If start_scn >= fork_snapshot_version, it contributes no data at the snapshot.
         const int64_t table_start_scn = table->get_start_scn().get_val_for_tx();
-        if (table_start_scn > fork_snapshot_version) {
+        if (table_start_scn >= fork_snapshot_version) {
           ++skip_future_cnt;
-          LOG_DEBUG("fork table: skip sstable with start_scn > fork_snapshot_version",
+          LOG_DEBUG("fork table: skip sstable with start_scn >= fork_snapshot_version",
               K(table_start_scn), K(fork_snapshot_version), KPC(table));
         } else if (OB_FAIL(participants.push_back(table))) {
           LOG_WARN("failed to push back sstable", KR(ret), KPC(table));
@@ -1763,7 +1773,7 @@ int ObTabletForkUtil::freeze_tablet(
     LOG_WARN("invalid arguments", K(ret), K(ls_id), K(tablet_id));
   } else {
     // Freeze the tablet
-    const bool is_sync = true;
+    const bool is_sync = false;
     const int64_t max_retry_time_us = 0; // Not used for sync freeze
     const bool need_rewrite_tablet_meta = false;
     const ObFreezeSourceFlag source = ObFreezeSourceFlag::FREEZE_TRIGGER;
